@@ -1315,7 +1315,7 @@ main() {
     stop_services
     logoff_other_sessions
     backup
-    #download_build
+    download_build
     extract_zip
     copy_env_configs
     update_environment_conf
