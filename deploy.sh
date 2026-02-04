@@ -132,7 +132,7 @@ stop_services() {
 ################################
 # KILL LOCKING WINDOWS PROCESSES
 ################################
-Kill-LockingProcesses() {
+kill_locking_processes() {
 
     echo "=================================================="
     echo "🔴 Starting process cleanup (locking processes)"
@@ -1272,7 +1272,7 @@ main() {
     fi
     create_dirs
     stop_services
-    Kill-LockingProcesses
+    kill_locking_processes
     backup
     download_build
     extract_zip
