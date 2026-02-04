@@ -139,22 +139,23 @@ kill_locking_processes() {
     echo "=================================================="
 
     echo "🔎 Attempting to terminate cmd.exe..."
-    taskkill //F //IM cmd.exe > /dev/null 2>&1 || echo "ℹ️ No running cmd.exe instances found"
+    cmd.exe /c "taskkill /F /IM cmd.exe" > /dev/null 2>&1 \
+        || echo "ℹ️ No running cmd.exe instances found"
 
     echo "🔎 Attempting to terminate explorer.exe..."
-    taskkill //F //IM explorer.exe > /dev/null 2>&1 || echo "ℹ️ explorer.exe was not running"
+    cmd.exe /c "taskkill /F /IM explorer.exe" > /dev/null 2>&1 \
+        || echo "ℹ️ explorer.exe was not running"
 
     echo "⏳ Waiting 5 seconds before restart..."
     sleep 5
 
     echo "🟢 Restarting explorer.exe..."
-    explorer.exe &
+    cmd.exe /c "start explorer.exe"
 
     echo "=================================================="
     echo "✔ Locking process cleanup completed"
     echo "=================================================="
 }
-
 
 
 ################################
