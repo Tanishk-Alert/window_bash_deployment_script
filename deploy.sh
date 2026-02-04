@@ -129,33 +129,92 @@ stop_services() {
     echo "=================================================="
 }
 
+
+################################
+# LOGOFF OTHER USER SESSIONS
+################################
+
+logoff_other_sessions() {
+
+    echo "=========================================="
+    echo "🔎 Detecting current session ID..."
+    echo "=========================================="
+
+    CURRENT_SESSION_ID=$(query session | awk '/>/{print $(NF-1)}')
+
+    echo "🟢 Current Session ID: $CURRENT_SESSION_ID"
+    echo "=========================================="
+    echo "🔎 Checking other sessions..."
+    echo "=========================================="
+
+    query session | tail -n +2 | while read -r line; do
+
+        # Remove leading >
+        clean_line=$(echo "$line" | sed 's/^>//')
+
+        # Extract from end (more reliable)
+        STATE=$(echo "$clean_line" | awk '{print $NF}')
+        ID=$(echo "$clean_line" | awk '{print $(NF-1)}')
+        USERNAME=$(echo "$clean_line" | awk '{print $(NF-2)}')
+
+        # Skip if no username
+        if [[ -z "$USERNAME" || "$USERNAME" == "services" ]]; then
+            continue
+        fi
+
+        # Skip current session
+        if [[ "$ID" == "$CURRENT_SESSION_ID" ]]; then
+            echo "⏭ Skipping current session ID: $ID"
+            continue
+        fi
+
+        if [[ "$STATE" == "Active" || "$STATE" == "Disc" ]]; then
+            echo "🚪 Logging off user: $USERNAME | ID: $ID | State: $STATE"
+            logoff "$ID"
+        fi
+
+    done
+
+    echo "=========================================="
+    echo "✅ Other sessions logged off successfully"
+    echo "=========================================="
+}
+
+
 ################################
 # KILL LOCKING WINDOWS PROCESSES
 ################################
-kill_locking_processes() {
 
-    echo "=================================================="
-    echo "🔴 Starting process cleanup (locking processes)"
-    echo "=================================================="
+# kill_locking_processes() {
 
-    echo "🔎 Attempting to terminate cmd.exe..."
-    cmd.exe /c "taskkill /F /IM cmd.exe" > /dev/null 2>&1 \
-        || echo "ℹ️ No running cmd.exe instances found"
+#     echo "=================================================="
+#     echo "🔴 Starting process cleanup (locking processes)"
+#     echo "=================================================="
 
-    echo "🔎 Attempting to terminate explorer.exe..."
-    cmd.exe /c "taskkill /F /IM explorer.exe" > /dev/null 2>&1 \
-        || echo "ℹ️ explorer.exe was not running"
+#     echo "🔎 Attempting to terminate cmd.exe..."
+#     cmd.exe /c "taskkill /F /IM cmd.exe" > /dev/null 2>&1 \
+#         || echo "ℹ️ No running cmd.exe instances found"
 
-    echo "⏳ Waiting 5 seconds before restart..."
-    sleep 5
+#     echo "🔎 Attempting to terminate explorer.exe..."
+#     # cmd.exe /c "taskkill /F /IM explorer.exe" > /dev/null 2>&1 \
+#     #     || echo "ℹ️ explorer.exe was not running"
 
-    echo "🟢 Restarting explorer.exe..."
-    cmd.exe /c "start explorer.exe"
+#     # echo "⏳ Waiting 5 seconds before restart..."
+#     # sleep 5
 
-    echo "=================================================="
-    echo "✔ Locking process cleanup completed"
-    echo "=================================================="
-}
+#     # echo "🟢 Restarting explorer.exe..."
+#     # cmd.exe /c "start explorer.exe"
+
+#     powershell -NoProfile -Command '
+# $shell = New-Object -ComObject Shell.Application
+# $shell.Windows() | ForEach-Object { $_.Quit() }
+# '
+
+
+#     echo "=================================================="
+#     echo "✔ Locking process cleanup completed"
+#     echo "=================================================="
+# }
 
 
 ################################
@@ -1254,7 +1313,7 @@ main() {
     fi
     create_dirs
     stop_services
-    kill_locking_processes
+    logoff_other_sessions
     backup
     #download_build
     extract_zip
