@@ -829,13 +829,6 @@ add_nssm_service_if_not_exists() {
     MSYS_NO_PATHCONV=1 "$NSSM" set "$SERVICE_NAME" Start SERVICE_AUTO_START
 
     echo "✅ Service '$SERVICE_NAME' created successfully"
-
-    # Start newly created service
-    echo "🚀 Starting service '$SERVICE_NAME'"
-    powershell.exe -Command "Start-Service $SERVICE_NAME"
-
-    echo "✅ Service '$SERVICE_NAME' started successfully"
-    echo "--------------------------------------------------"
 }
 
 
