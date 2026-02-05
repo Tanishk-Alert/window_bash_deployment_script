@@ -475,8 +475,9 @@ copy_env_configs() {
         # Convert paths for Windows usage
         echo "🔄 Converting keystore paths to Windows format"
 
-        WIN_KEYSTORE_FILE=$(cygpath -w "$KEYSTORE_FILE" | sed 's|\\|\\\\|g')
-        WIN_KEYSTORE_KEY_PATH=$(cygpath -w "$KEYSTORE_KEY_PATH" | sed 's|\\|\\\\|g')
+        WIN_KEYSTORE_FILE=$(cygpath -w "$KEYSTORE_FILE" | sed 's|\\|\\\\\\\\|g')
+        WIN_KEYSTORE_KEY_PATH=$(cygpath -w "$KEYSTORE_KEY_PATH" | sed 's|\\|\\\\\\\\|g')
+
 
 
         ################################
@@ -933,7 +934,7 @@ create_agent_service() {
     add_nssm_service_if_not_exists \
       "SVC_AGENT" \
       "$JAVA_HOME/bin/java.exe" \
-      '-cp "./lib/*" -Xms1g -Xmx3g -Dconfig.file=conf/application.conf -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
+      '-cp "./lib/*" -Xms1g -Xmx3g -Dconfig.file=conf/application.conf -Dhttp.port=9095 -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
       "$INIT_APPS_PATH/alert-agent-1.0" \
       "$INIT_APPS_PATH/alert-agent-1.0/logs/srvc.out" \
       "$INIT_APPS_PATH/alert-agent-1.0/logs/srvc.err"
@@ -1316,9 +1317,9 @@ main() {
     fi
     create_dirs
     stop_services
-    # logoff_other_sessions
+    logoff_other_sessions
     backup
-    # download_build
+    download_build
     extract_zip
     copy_env_configs
     update_environment_conf
