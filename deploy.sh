@@ -1262,6 +1262,16 @@ flyway_run() {
             -url="$dbURL" \
             -schemas="$dbSchema" \
             -locations="$locations" \
+            repair
+
+        echo "✅ Flyway repair completed for ${service^^}"
+
+        MSYS_NO_PATHCONV=1 flyway \
+            -user="$flywayUser" \
+            -password="$flywayPass" \
+            -url="$dbURL" \
+            -schemas="$dbSchema" \
+            -locations="$locations" \
             migrate \
             2>&1 | tee "$logfile"
 
