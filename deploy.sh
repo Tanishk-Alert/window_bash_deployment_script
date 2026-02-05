@@ -472,6 +472,13 @@ copy_env_configs() {
         echo "📄 Copying log4j2.xml"
         cp "${config_src}/log4j2.xml" "${app_conf_dir}/"
 
+        # Convert paths for Windows usage
+        echo "🔄 Converting keystore paths to Windows format"
+
+        WIN_KEYSTORE_FILE=$(cygpath -w "$KEYSTORE_FILE" | sed 's|\\|\\\\|g')
+        WIN_KEYSTORE_KEY_PATH=$(cygpath -w "$KEYSTORE_KEY_PATH" | sed 's|\\|\\\\|g')
+
+
         ################################
         # KEYSTORE CONFIG UPDATE
         ################################
@@ -482,11 +489,11 @@ copy_env_configs() {
             cp "${config_src}/keystore.conf" "${app_conf_dir}/"
 
             echo "✏️ Replacing {AEKEYSTOREFILE} placeholder"
-            sed -i "s|{AEKEYSTOREFILE}|${KEYSTORE_FILE}|g" \
+            sed -i "s|{AEKEYSTOREFILE}|${WIN_KEYSTORE_FILE}|g" \
                 "${app_conf_dir}/keystore.conf"
 
             echo "✏️ Replacing {AEKEYSTOREPASSWD} placeholder"
-            sed -i "s|{AEKEYSTOREPASSWD}|${KEYSTORE_KEY_PATH}|g" \
+            sed -i "s|{AEKEYSTOREPASSWD}|${WIN_KEYSTORE_KEY_PATH}|g" \
                 "${app_conf_dir}/keystore.conf"
 
             echo "✅ keystore.conf updated successfully"
@@ -544,10 +551,6 @@ copy_env_configs() {
     echo "=================================================="
 }
 
-
-################################
-# UPDATE environment.conf
-################################
 ################################
 # UPDATE environment.conf FILES
 ################################
@@ -1315,7 +1318,7 @@ main() {
     stop_services
     logoff_other_sessions
     backup
-    download_build
+    # download_build
     extract_zip
     copy_env_configs
     update_environment_conf
