@@ -897,7 +897,7 @@ create_application_services() {
     add_nssm_service_if_not_exists \
       "SVC_API" \
       "$JAVA_HOME/bin/java.exe" \
-      '-cp "./lib/*" -Xms1g -Xmx3g -Dconfig.file=conf/application.conf -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
+      '-cp "./lib/*" -Xms2g -Xmx6g -Dconfig.file=conf/application.conf -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
       "$INIT_APPS_PATH/alert-api-server-1.0" \
       "$INIT_APPS_PATH/alert-api-server-1.0/logs/srvc.out" \
       "$INIT_APPS_PATH/alert-api-server-1.0/logs/srvc.err"
@@ -906,7 +906,7 @@ create_application_services() {
     add_nssm_service_if_not_exists \
       "SVC_JOB" \
       "$JAVA_HOME/bin/java.exe" \
-      '-cp "./lib/*" -Xms1g -Xmx3g -Dconfig.file=conf/jobserver.conf -Dhttp.port=9090 -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
+      '-cp "./lib/*" -Xms2g -Xmx6g -Dconfig.file=conf/jobserver.conf -Dhttp.port=9090 -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
       "$INIT_APPS_PATH/alert-job-server-1.0" \
       "$INIT_APPS_PATH/alert-job-server-1.0/logs/srvc.out" \
       "$INIT_APPS_PATH/alert-job-server-1.0/logs/srvc.err"
@@ -934,7 +934,7 @@ create_agent_service() {
     add_nssm_service_if_not_exists \
       "SVC_AGENT" \
       "$JAVA_HOME/bin/java.exe" \
-      '-cp "./lib/*" -Xms1g -Xmx3g -Dconfig.file=conf/application.conf -Dhttp.port=9095 -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
+      '-cp "./lib/*" -Xms2g -Xmx6g -Dconfig.file=conf/application.conf -Dhttp.port=9095 -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
       "$INIT_APPS_PATH/alert-agent-1.0" \
       "$INIT_APPS_PATH/alert-agent-1.0/logs/srvc.out" \
       "$INIT_APPS_PATH/alert-agent-1.0/logs/srvc.err"
