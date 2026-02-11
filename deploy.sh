@@ -1355,7 +1355,7 @@ main() {
     ##setup_keystore
     #uiSetup
     #applicationStart
-    validate
+    #validate
     flyway_run
 }
 
