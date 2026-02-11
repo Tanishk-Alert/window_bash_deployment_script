@@ -1326,16 +1326,16 @@ main() {
         exit 0
     fi
     create_dirs
-    stop_services
+    #stop_services
     logoff_other_sessions
-    backup
+    #backup
     # download_build
-    extract_zip
-    copy_env_configs
-    update_environment_conf
-    setup_keystore
-    uiSetup
-    applicationStart
+    #extract_zip
+    #copy_env_configs
+    #update_environment_conf
+    ##setup_keystore
+    #uiSetup
+    #applicationStart
     validate
     flyway_run
 }
