@@ -1256,6 +1256,8 @@ flyway_run() {
         echo "📌 Log file  : $logfile"
         echo "--------------------------------------------------"
 
+        echo "✅ Flyway repair started for ${service^^}"
+
         MSYS_NO_PATHCONV=1 flyway \
             -user="$flywayUser" \
             -password="$flywayPass" \
