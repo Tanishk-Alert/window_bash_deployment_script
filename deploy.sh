@@ -1327,7 +1327,7 @@ main() {
     fi
     create_dirs
     #stop_services
-    logoff_other_sessions
+    #logoff_other_sessions
     #backup
     # download_build
     #extract_zip
