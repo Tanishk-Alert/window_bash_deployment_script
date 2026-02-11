@@ -1256,7 +1256,13 @@ flyway_run() {
         echo "📌 Log file  : $logfile"
         echo "--------------------------------------------------"
 
-        echo "✅ Flyway repair started for ${service^^}"
+        mkdir -p "$(dirname "$logfile")"
+        touch "$logfile"
+
+        ################################
+        # REPAIR (Do not stop script)
+        ################################
+        echo "🔧 Running Flyway repair for ${service^^}"
 
         MSYS_NO_PATHCONV=1 flyway \
             -user="$flywayUser" \
@@ -1264,9 +1270,12 @@ flyway_run() {
             -url="$dbURL" \
             -schemas="$dbSchema" \
             -locations="$locations" \
-            repair
+            repair || echo "⚠ Repair failed — continuing to migrate"
 
-        echo "✅ Flyway repair completed for ${service^^}"
+        ################################
+        # MIGRATE (Store in logfile)
+        ################################
+        echo "🚀 Running Flyway migrate for ${service^^}"
 
         MSYS_NO_PATHCONV=1 flyway \
             -user="$flywayUser" \
@@ -1274,11 +1283,19 @@ flyway_run() {
             -url="$dbURL" \
             -schemas="$dbSchema" \
             -locations="$locations" \
-            migrate \
-            2>&1 | tee "$logfile"
+            migrate 2>&1 | tee "$logfile"
+
+        migrate_status=${PIPESTATUS[0]}
+
+        if [ $migrate_status -ne 0 ]; then
+            echo "❌ Flyway migrate FAILED for ${service^^}"
+            return 1
+        fi
 
         echo "✅ Flyway migration completed for ${service^^}"
+        return 0
     }
+
 
     ################################
     # APPLICATION DATABASE
