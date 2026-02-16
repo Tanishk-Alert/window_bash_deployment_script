@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 export MSYS_NO_PATHCONV=1
 
 ################################
@@ -654,8 +654,9 @@ setup_keystore() {
 
     if [[ -z "${keystorePass:-}" ]]; then
         echo "❌ keystorePass missing"
-        return 1 2>/dev/null || exit 1
+        exit 1
     fi
+
 
 
     [ -z "$KEYSTORE_FILE" ] && { echo "❌ KEYSTORE_FILE missing"; exit 1; }
