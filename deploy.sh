@@ -652,7 +652,11 @@ setup_keystore() {
     # Validate required variables
     echo "🔎 Validating required keystore variables"
 
-    [ -z "$keystorePass" ] && { echo "❌ keystorePass missing"; exit 1; }
+    if [[ -z "${keystorePass:-}" ]]; then
+        echo "❌ keystorePass missing"
+        return 1 2>/dev/null || exit 1
+    fi
+
 
     [ -z "$KEYSTORE_FILE" ] && { echo "❌ KEYSTORE_FILE missing"; exit 1; }
 
