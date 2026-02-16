@@ -1046,7 +1046,7 @@ applicationStart() {
     if [[ " ${ARTIFACTS[*]} " == *" application "* ]]; then
         echo "➡️ Application artifact detected"
 
-        for svc in SVC_API SVC_JOB; do
+        for svc in SVC_API SVC_JOB SVC_UI; do
             echo "--------------------------------------------------"
             echo "🔎 Checking service: $svc"
 
