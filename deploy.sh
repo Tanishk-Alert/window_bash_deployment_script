@@ -654,8 +654,9 @@ setup_keystore() {
 
     if [[ -z "${keystorePass:-}" ]]; then
         echo "❌ keystorePass missing"
-        exit 1
+        return 1
     fi
+
 
 
 
@@ -1350,19 +1351,23 @@ main() {
         flyway_run
         exit 0
     fi
-    # create_dirs
-    # stop_services
-    # logoff_other_sessions
-    # backup
-    # download_build
-    # extract_zip
-    copy_env_configs
-    update_environment_conf
-    setup_keystore
-    uiSetup
-    applicationStart
-    validate
-    flyway_run
+    # create_dirs || return 1
+    # stop_services || return 1
+    # logoff_other_sessions || return 1
+    # backup || return 1
+    # download_build || return 1
+    # extract_zip || return 1
+    copy_env_configs || return 1
+    update_environment_conf || return 1
+    setup_keystore || return 1
+    uiSetup || return 1
+    applicationStart || return 1
+    validate || return 1
+    flyway_run || return 1
+
 }
 
 main
+EXIT_CODE=$?
+echo "Final exit code: $EXIT_CODE"
+exit $EXIT_CODE
