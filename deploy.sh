@@ -1351,12 +1351,12 @@ main() {
         flyway_run
         exit 0
     fi
-    # create_dirs || return 1
-    # stop_services || return 1
-    # logoff_other_sessions || return 1
-    # backup || return 1
-    # download_build || return 1
-    # extract_zip || return 1
+    create_dirs || return 1
+    stop_services || return 1
+    logoff_other_sessions || return 1
+    backup || return 1
+    download_build || return 1
+    extract_zip || return 1
     copy_env_configs || return 1
     update_environment_conf || return 1
     setup_keystore || return 1
