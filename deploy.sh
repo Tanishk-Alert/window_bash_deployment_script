@@ -1355,7 +1355,7 @@ main() {
     stop_services || return 1
     logoff_other_sessions || return 1
     backup || return 1
-    download_build || return 1
+    # download_build || return 1
     extract_zip || return 1
     copy_env_configs || return 1
     update_environment_conf || return 1
