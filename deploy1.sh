@@ -1,21 +1,46 @@
 #!/usr/bin/env bash
-set -e
 export MSYS_NO_PATHCONV=1
+
+fail() {
+    echo "❌ ERROR: $1"
+    exit 1
+}
+
+run() {
+    "$@"
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        fail "Command failed: $*"
+    fi
+}
+
+step() {
+    echo "========== $1 =========="
+    shift
+    "$@"
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        fail "Step failed: $1"
+    fi
+}
 
 ################################
 # LOAD ENV
 ################################
-ENV_FILE="/c/AlertEnterprise/configs/.env"
+ENV_FILE="/opt/AlertEnterprise/configs/.env"
 
-[ ! -f "$ENV_FILE" ] && echo "❌ ENV file missing: $ENV_FILE" && exit 1
-source "$ENV_FILE"
+[ ! -f "$ENV_FILE" ] && fail "ENV file missing: $ENV_FILE"
 
-export S3_SRC_PATH="$1"
-export gitBranch="$2"
-export buildVersion="$3"
-export flywayFixed="$4"
-export ARTIFACTS_ARG="$5"
-export flywaySkip="$6"
+source "$ENV_FILE" || fail "Failed to source ENV"
+
+################################
+# INPUT PARAMS
+################################
+S3_SRC_PATH="$1"
+gitBranch="$2"
+buildVersion="$3"
+flywayFixed="$4"
+ARTIFACTS_ARG="$5"
 
 echo "DEBUG:"
 echo "S3_SRC_PATH=$S3_SRC_PATH"
@@ -23,104 +48,175 @@ echo "gitBranch=$gitBranch"
 echo "buildVersion=$buildVersion"
 
 ################################
+# PRECHECK
+################################
+precheck() {
+
+echo "========== PRECHECK START =========="
+
+fail() {
+   echo "❌ PRECHECK FAILED: $1"
+   exit 1
+}
+
+################################
+# SOFTWARE CHECK
+################################
+command -v java >/dev/null 2>&1 || fail "Java not installed"
+command -v unzip >/dev/null 2>&1 || fail "unzip not installed"
+command -v aws >/dev/null 2>&1 || fail "AWS CLI not installed"
+command -v jq >/dev/null 2>&1 || fail "jq not installed"
+command -v flyway >/dev/null 2>&1 || fail "flyway not installed"
+command -v ss >/dev/null 2>&1 || fail "ss command missing"
+
+################################
+# IMPORTANT DIRECTORY CHECK
+################################
+
+[ -d "$CONFIG_PATH" ] || fail "CONFIG_PATH missing: $CONFIG_PATH"
+[ -d "$INIT_APPS_PATH" ] || fail "INIT_APPS_PATH missing: $INIT_APPS_PATH"
+[ -d "$BUILD_PATH" ] || fail "BUILD_PATH missing: $BUILD_PATH"
+[ -d "$LOGS_PATH" ] || fail "LOGS_PATH missing: $LOGS_PATH"
+
+
+
+################################
+# DISK SPACE CHECK
+################################
+df -h "$INIT_APPS_PATH" | awk 'NR==2 { if ($5+0 > 90) exit 1 }'
+[ $? -ne 0 ] && fail "Disk usage > 90% on deployment mount"
+
+################################
+# JAVA WORKING CHECK
+################################
+java -version >/dev/null 2>&1 || fail "Java runtime not working"
+
+echo "========== PRECHECK SUCCESS =========="
+
+}
+
+################################
 # BUILD ARTIFACT LIST
 ################################
 ARTIFACTS=()
+
 IFS=',' read -ra SELECTED <<< "$ARTIFACTS_ARG"
 
 for item in "${SELECTED[@]}"; do
     case "${item,,}" in
-        application|agent) ARTIFACTS+=("$item") ;;
-        *) echo "❌ Invalid artifact: $item"; exit 1 ;;
+        application|agent)
+            ARTIFACTS+=("$item")
+            ;;
+        *)
+            fail "Invalid artifact value: $item"
+            ;;
     esac
 done
 
-[ "${#ARTIFACTS[@]}" -eq 0 ] && echo "❌ No artifacts selected" && exit 1
+[ ${#ARTIFACTS[@]} -eq 0 ] && fail "No artifacts selected"
 
 ################################
 # LOAD SECRETS
 ################################
-# [ -z "$SECRETS" ] && echo "❌ SECRETS missing" && exit 1
+[ -z "$SECRETS" ] && fail "SECRETS missing"
 
-# while read -r item; do
-#     key=$(jq -r 'keys[0]' <<< "$item")
-#     val=$(jq -r '.[keys[0]]' <<< "$item")
-#     export "$key=$val"
-# done < <(jq -c '.[]' <<< "$SECRETS")
+while read -r item; do
+    key=$(jq -r 'keys[0]' <<< "$item")
+    val=$(jq -r '.[keys[0]]' <<< "$item")
+    export "$key=$val"
+done < <(jq -c '.[]' <<< "$SECRETS")
+
+[ -z "$keystorePass" ] && fail "keystorePass missing"
 
 ################################
 # FUNCTIONS
 ################################
+
+################################
+# CREATE DIRS
+################################
 create_dirs() {
-    mkdir -p "$APP_PATH" "$INIT_APPS_PATH" "$KEYSTORE_PATH" \
-             "$CONFIG_PATH" \
-             "$LOGS_PATH" "$BUILD_PATH" "$CERT_DIR"
+    echo "Creating directories"
+    run mkdir -p "$APP_PATH" "$INIT_APPS_PATH" "$KEYSTORE_PATH" \
+        "$CONFIG_PATH" "$SCRIPTS_PATH" "$TEMP_PATH" "$CERT_DIR" \
+        "$LOGS_PATH" "$BUILD_PATH"
 }
 
 ################################
 # STOP WINDOWS SERVICES
 ################################
 stop_services() {
+
     echo "=================================================="
     echo "🛑 Starting service shutdown process"
     echo "=================================================="
 
-    # Helper function to check if a Windows service exists
+    ################################
+    # Helper → check service exists
+    ################################
     service_exists() {
-        powershell.exe -Command \
+        powershell.exe -NoProfile -Command \
         "Get-Service -Name '$1' -ErrorAction SilentlyContinue" \
         | grep -q "$1"
     }
 
     ################################
-    # STOP APPLICATION SERVICES
+    # Helper → stop service safely
+    ################################
+    stop_service_safe() {
+
+        svc="$1"
+
+        echo "🔍 Checking if ${svc} exists"
+
+        if service_exists "$svc"; then
+
+            echo "🛑 Stopping ${svc}..."
+
+            powershell.exe -NoProfile -Command "
+                try {
+                    Stop-Service -Name '$svc' -Force -ErrorAction Stop
+                }
+                catch {
+                    exit 1
+                }
+            "
+
+            rc=$?
+            [ $rc -ne 0 ] && fail "Failed stopping ${svc}"
+
+            echo "✅ ${svc} stopped successfully"
+
+        else
+            echo "ℹ️ ${svc} not found, skipping"
+        fi
+    }
+
+    ################################
+    # APPLICATION SERVICES
     ################################
     if [[ " ${ARTIFACTS[*]} " == *" application "* ]]; then
+
         echo "➡️ Application artifact detected"
-        echo "🔄 Attempting to stop APPLICATION services"
-
-        # ---- SVC_API ----
-        echo "🔍 Checking if SVC_API exists"
-        if service_exists "SVC_API"; then
-            echo "🛑 Stopping SVC_API..."
-            powershell.exe -Command "Stop-Service SVC_API -Force"
-            echo "✅ SVC_API stopped successfully"
-        else
-            echo "ℹ️ SVC_API not found, skipping"
-        fi
-
-        # ---- SVC_JOB ----
-        echo "🔍 Checking if SVC_JOB exists"
-        if service_exists "SVC_JOB"; then
-            echo "🛑 Stopping SVC_JOB..."
-            powershell.exe -Command "Stop-Service SVC_JOB -Force"
-            echo "✅ SVC_JOB stopped successfully"
-        else
-            echo "ℹ️ SVC_JOB not found, skipping"
-        fi
+        stop_service_safe "SVC_API"
+        stop_service_safe "SVC_JOB"
 
         echo "✔ APPLICATION service shutdown stage completed"
+
     else
         echo "ℹ️ Application artifact not selected, skipping APPLICATION services"
     fi
 
     ################################
-    # STOP AGENT SERVICE
+    # AGENT SERVICE
     ################################
     if [[ " ${ARTIFACTS[*]} " == *" agent "* ]]; then
-        echo "➡️ Agent artifact detected"
-        echo "🔄 Attempting to stop AGENT service"
 
-        echo "🔍 Checking if SVC_AGENT exists"
-        if service_exists "SVC_AGENT"; then
-            echo "🛑 Stopping SVC_AGENT..."
-            powershell.exe -Command "Stop-Service SVC_AGENT -Force"
-            echo "✅ SVC_AGENT stopped successfully"
-        else
-            echo "ℹ️ SVC_AGENT not found, skipping"
-        fi
+        echo "➡️ Agent artifact detected"
+        stop_service_safe "SVC_AGENT"
 
         echo "✔ AGENT service shutdown stage completed"
+
     else
         echo "ℹ️ Agent artifact not selected, skipping AGENT service"
     fi
@@ -141,24 +237,29 @@ logoff_other_sessions() {
     echo "🔎 Detecting current session ID..."
     echo "=========================================="
 
-    CURRENT_SESSION_ID=$(query session | awk '/>/{print $(NF-1)}')
+    SESSIONS_OUTPUT=$(query session)
+    rc=$?
+    [ $rc -ne 0 ] && fail "query session command failed"
+
+    CURRENT_SESSION_ID=$(echo "$SESSIONS_OUTPUT" | awk '/>/{print $(NF-1)}')
+
+    [ -z "$CURRENT_SESSION_ID" ] && fail "Unable to detect current session ID"
 
     echo "🟢 Current Session ID: $CURRENT_SESSION_ID"
+
     echo "=========================================="
     echo "🔎 Checking other sessions..."
     echo "=========================================="
 
-    query session | tail -n +2 | while read -r line; do
+    echo "$SESSIONS_OUTPUT" | tail -n +2 | while read -r line; do
 
-        # Remove leading >
         clean_line=$(echo "$line" | sed 's/^>//')
 
-        # Extract from end (more reliable)
         STATE=$(echo "$clean_line" | awk '{print $NF}')
         ID=$(echo "$clean_line" | awk '{print $(NF-1)}')
         USERNAME=$(echo "$clean_line" | awk '{print $(NF-2)}')
 
-        # Skip if no username
+        # Skip invalid rows
         if [[ -z "$USERNAME" || "$USERNAME" == "services" ]]; then
             continue
         fi
@@ -170,8 +271,14 @@ logoff_other_sessions() {
         fi
 
         if [[ "$STATE" == "Active" || "$STATE" == "Disc" ]]; then
+
             echo "🚪 Logging off user: $USERNAME | ID: $ID | State: $STATE"
+
             logoff "$ID"
+            rc=$?
+
+            [ $rc -ne 0 ] && fail "Failed to logoff session ID $ID"
+
         fi
 
     done
@@ -180,7 +287,6 @@ logoff_other_sessions() {
     echo "✅ Other sessions logged off successfully"
     echo "=========================================="
 }
-
 
 ################################
 # KILL LOCKING WINDOWS PROCESSES
@@ -223,66 +329,21 @@ logoff_other_sessions() {
 ################################
 backup() {
 
-    echo "=================================================="
-    echo "📦 Starting backup process"
-    echo "=================================================="
+[ ! -d "$APP_PATH" ] && fail "APP_PATH missing"
 
-    # Verify APP_PATH exists
-    echo "🔎 Checking if APP_PATH exists: $APP_PATH"
-    if [ ! -d "$APP_PATH" ]; then
-        echo "❌ APP_PATH does not exist: $APP_PATH"
-        return 1
-    fi
-    echo "✅ APP_PATH exists"
+[ -d "$APP_PATH/bkp_2" ] && run rm -rf "$APP_PATH/bkp_2"
 
-    ################################
-    # Rotate bkp_2
-    ################################
-    if [ -d "$APP_PATH/bkp_2" ]; then
-        echo "🗑️ Found existing bkp_2 → Removing"
-        ls -ld "$APP_PATH/bkp_2"
-        rm -rf "$APP_PATH/bkp_2"
-        echo "✅ bkp_2 removed"
-    else
-        echo "ℹ️ No existing bkp_2 found"
-    fi
+if [ -d "$APP_PATH/bkp_1" ]; then
+    run mkdir -p "$APP_PATH/bkp_2"
+    run mv "$APP_PATH"/bkp_1/* "$APP_PATH"/bkp_2/
+fi
 
-    ################################
-    # Move bkp_1 → bkp_2
-    ################################
-    if [ -d "$APP_PATH/bkp_1" ]; then
-        echo "🔁 Found bkp_1 → Moving contents to bkp_2"
-        ls -ld "$APP_PATH/bkp_1"
+if [ -d "$INIT_APPS_PATH" ] && [ "$(ls -A "$INIT_APPS_PATH")" ]; then
+    run mkdir -p "$APP_PATH/bkp_1"
+    cd "$INIT_APPS_PATH" || fail "cd failed"
+    run mv * "$APP_PATH/bkp_1/"
+fi
 
-        mkdir -p "$APP_PATH/bkp_2"
-        mv "$APP_PATH"/bkp_1/* "$APP_PATH"/bkp_2/
-
-        echo "✅ bkp_1 moved to bkp_2"
-    else
-        echo "ℹ️ No existing bkp_1 found"
-    fi
-
-    ################################
-    # Backup current apps → bkp_1
-    ################################
-    echo "🔎 Checking INIT_APPS_PATH: $INIT_APPS_PATH"
-
-    if [ -d "$INIT_APPS_PATH" ] && [ "$(ls -A "$INIT_APPS_PATH")" ]; then
-        echo "📁 Creating new bkp_1 directory"
-        mkdir -p "$APP_PATH/bkp_1"
-
-        echo "🔄 Moving current application files to bkp_1"
-        cd "$INIT_APPS_PATH" || exit 1
-        mv * "$APP_PATH/bkp_1/" 2>/dev/null || true
-
-        echo "✅ Current apps successfully backed up to bkp_1"
-    else
-        echo "⚠️ No existing apps directory to backup"
-    fi
-
-    echo "=================================================="
-    echo "✔ Backup process completed"
-    echo "=================================================="
 }
 
 ################################
@@ -365,82 +426,28 @@ download_build() {
 ################################
 extract_zip() {
 
-    echo "=================================================="
-    echo "📦 Starting artifact extraction process"
-    echo "=================================================="
+extract_artifact() {
+    artifact="$1"
+    zip_file="${BUILD_PATH}/${artifact}.zip"
 
-    echo "📁 Target extraction directory: $INIT_APPS_PATH"
+    [ ! -f "$zip_file" ] && fail "$artifact zip missing"
 
-    extract_artifact() {
-
-        local artifact="$1"
-        local zip_file="${BUILD_PATH}/${artifact}.zip"
-
-        echo "--------------------------------------------------"
-        echo "🔎 Processing artifact: ${artifact}.zip"
-        echo "📂 Source ZIP: $zip_file"
-        echo "--------------------------------------------------"
-
-        if [[ -f "$zip_file" ]]; then
-            echo "✅ ZIP file found"
-
-            # Special handling for DB artifacts
-            if [[ "${artifact,,}" == *db* ]]; then
-                echo "🗄️ DB artifact detected"
-                echo "➡️ Extracting into dedicated folder: ${INIT_APPS_PATH}/${artifact}"
-
-                unzip -qq "$zip_file" -d "${INIT_APPS_PATH}/${artifact}"
-
-                echo "✅ ${artifact}.zip extracted to its DB folder"
-            else
-                echo "➡️ Extracting into main apps directory"
-
-                unzip -qq "$zip_file" -d "${INIT_APPS_PATH}"
-
-                echo "✅ ${artifact}.zip extracted successfully"
-            fi
-        else
-            echo "⚠️ ${artifact}.zip not found → Skipping extraction"
-        fi
-    }
-
-    ################################
-    # APPLICATION ARTIFACTS
-    ################################
-    if [[ " ${ARTIFACTS[*]} " == *" application "* ]]; then
-        echo "➡️ Application artifact selected"
-        echo "🔄 Extracting APPLICATION artifacts (api, job, ui, DB)"
-
-        for artifact in api job ui DB; do
-            extract_artifact "$artifact"
-        done
-
-        echo "✔ APPLICATION extraction stage completed"
+    if [[ "${artifact,,}" == *db* ]]; then
+        run unzip -qq "$zip_file" -d "${INIT_APPS_PATH}/${artifact}"
     else
-        echo "ℹ️ Application artifact not selected → Skipping APPLICATION extraction"
+        run unzip -qq "$zip_file" -d "${INIT_APPS_PATH}"
     fi
-
-    ################################
-    # AGENT ARTIFACTS
-    ################################
-    if [[ " ${ARTIFACTS[*]} " == *" agent "* ]]; then
-        echo "➡️ Agent artifact selected"
-        echo "🔄 Extracting AGENT artifacts (agentserver, agentDB)"
-
-        for artifact in agentserver agentDB; do
-            extract_artifact "$artifact"
-        done
-
-        echo "✔ AGENT extraction stage completed"
-    else
-        echo "ℹ️ Agent artifact not selected → Skipping AGENT extraction"
-    fi
-
-    echo "=================================================="
-    echo "🎉 Artifact extraction process completed"
-    echo "=================================================="
 }
 
+if [[ " ${ARTIFACTS[*]} " == *" application "* ]]; then
+    for a in api job ui DB; do extract_artifact "$a"; done
+fi
+
+if [[ " ${ARTIFACTS[*]} " == *" agent "* ]]; then
+    for a in agentserver agentDB; do extract_artifact "$a"; done
+fi
+
+}
 
 ################################
 # COPY ENV CONFIGS (STANDARDIZED)
@@ -467,19 +474,31 @@ copy_env_configs() {
         echo "📁 Target Dir    : $app_conf_dir"
         echo "--------------------------------------------------"
 
+        [ ! -d "$app_conf_dir" ] && fail "Conf dir missing: $app_conf_dir"
+        [ ! -d "$config_src" ] && fail "Config source missing: $config_src"
+
         echo "📄 Copying override_env.conf"
         cp "${config_src}/override_env.conf" "${app_conf_dir}/"
+        [ $? -ne 0 ] && fail "override_env.conf copy failed for $service"
 
         echo "📄 Copying log4j2.xml"
         cp "${config_src}/log4j2.xml" "${app_conf_dir}/"
+        [ $? -ne 0 ] && fail "log4j2.xml copy failed for $service"
 
         # Convert paths for Windows usage
         echo "🔄 Converting keystore paths to Windows format"
 
-        WIN_KEYSTORE_FILE=$(cygpath -w "$KEYSTORE_FILE" | sed 's|\\|\\\\\\\\|g')
-        WIN_KEYSTORE_KEY_PATH=$(cygpath -w "$KEYSTORE_KEY_PATH" | sed 's|\\|\\\\\\\\|g')
+        WIN_KEYSTORE_FILE=$(cygpath -w "$KEYSTORE_FILE")
+        [ $? -ne 0 ] && fail "cygpath conversion failed for KEYSTORE_FILE"
 
+        WIN_KEYSTORE_FILE=$(echo "$WIN_KEYSTORE_FILE" | sed 's|\\|\\\\\\\\|g')
+        [ $? -ne 0 ] && fail "sed formatting failed for KEYSTORE_FILE"
 
+        WIN_KEYSTORE_KEY_PATH=$(cygpath -w "$KEYSTORE_KEY_PATH")
+        [ $? -ne 0 ] && fail "cygpath conversion failed for KEYSTORE_KEY_PATH"
+
+        WIN_KEYSTORE_KEY_PATH=$(echo "$WIN_KEYSTORE_KEY_PATH" | sed 's|\\|\\\\\\\\|g')
+        [ $? -ne 0 ] && fail "sed formatting failed for KEYSTORE_KEY_PATH"
 
         ################################
         # KEYSTORE CONFIG UPDATE
@@ -489,14 +508,17 @@ copy_env_configs() {
             echo "📄 Copying keystore.conf template"
 
             cp "${config_src}/keystore.conf" "${app_conf_dir}/"
+            [ $? -ne 0 ] && fail "keystore.conf copy failed for $service"
 
             echo "✏️ Replacing {AEKEYSTOREFILE} placeholder"
             sed -i "s|{AEKEYSTOREFILE}|${WIN_KEYSTORE_FILE}|g" \
                 "${app_conf_dir}/keystore.conf"
+            [ $? -ne 0 ] && fail "keystoreFile sed failed for $service"
 
             echo "✏️ Replacing {AEKEYSTOREPASSWD} placeholder"
             sed -i "s|{AEKEYSTOREPASSWD}|${WIN_KEYSTORE_KEY_PATH}|g" \
                 "${app_conf_dir}/keystore.conf"
+            [ $? -ne 0 ] && fail "keystorePass sed failed for $service"
 
             echo "✅ keystore.conf updated successfully"
         else
@@ -558,83 +580,46 @@ copy_env_configs() {
 ################################
 update_environment_conf() {
 
-    echo "=================================================="
-    echo "📝 Starting environment.conf update process"
-    echo "=================================================="
+echo "📝 Updating environment.conf..."
 
-    update_env() {
+update_env() {
 
-        local service="$1"
-        local env_file="$2"
-        local ORIGINAL="${env_file}.original"
+    service="$1"
+    env_file="$2"
+    ORIGINAL="${env_file}.original"
 
-        echo "--------------------------------------------------"
-        echo "➡️ Processing service: ${service^^}"
-        echo "📄 Target file : $env_file"
-        echo "📄 Original    : $ORIGINAL"
-        echo "--------------------------------------------------"
+    [ ! -f "$ORIGINAL" ] && fail "${ORIGINAL} missing for $service"
 
-        # Check if original file exists
-        if [ ! -f "$ORIGINAL" ]; then
-            echo "⚠️ Missing ${ORIGINAL} → Skipping ${service^^}"
-            return
-        fi
+    cp "$ORIGINAL" "$env_file"
+    [ $? -ne 0 ] && fail "environment.conf copy failed for $service"
 
-        echo "📋 Restoring environment.conf from original"
-        cp "$ORIGINAL" "$env_file"
+    sed -i 's/\r$//' "$env_file"
+    [ $? -ne 0 ] && fail "CRLF cleanup failed for $service"
 
-        echo "🧹 Removing Windows CRLF characters (if any)"
-        sed -i 's/\r$//' "$env_file"
-
-        echo "➕ Ensuring override_env include is present"
-        printf "\n" >> "$env_file"
-
-        if grep -q '^include "override_env"' "$env_file"; then
-            echo "ℹ️ override_env already included"
-        else
-            echo 'include "override_env"' >> "$env_file"
-            echo "✅ override_env include added"
-        fi
-
-        echo "✔ environment.conf updated for ${service^^}"
-    }
-
-    ################################
-    # APPLICATION SERVICES
-    ################################
-    if [[ " ${ARTIFACTS[*]} " == *" application "* ]]; then
-        echo "➡️ Application artifact selected"
-        echo "🔄 Updating environment.conf for API and JOB"
-
-        update_env "api" \
-            "$INIT_APPS_PATH/alert-api-server-1.0/conf/environment.conf"
-
-        update_env "job" \
-            "$INIT_APPS_PATH/alert-job-server-1.0/conf/environment.conf"
-
-        echo "✔ APPLICATION environment update stage completed"
-    else
-        echo "ℹ️ Application artifact not selected → Skipping APPLICATION environment update"
+    grep -q '^include "override_env"' "$env_file"
+    if [ $? -ne 0 ]; then
+        echo '' >> "$env_file"
+        echo 'include "override_env"' >> "$env_file"
     fi
 
-    ################################
-    # AGENT SERVICE
-    ################################
-    if [[ " ${ARTIFACTS[*]} " == *" agent "* ]]; then
-        echo "➡️ Agent artifact selected"
-        echo "🔄 Updating environment.conf for AGENT"
+    echo "✔ environment.conf updated for ${service^^}"
+}
 
-        update_env "agent" \
-            "$INIT_APPS_PATH/alert-agent-1.0/conf/environment.conf"
+[[ " ${ARTIFACTS[*]} " == *" application "* ]] && {
+    update_env "api" \
+    "$INIT_APPS_PATH/alert-api-server-1.0/conf/environment.conf"
 
-        echo "✔ AGENT environment update stage completed"
-    else
-        echo "ℹ️ Agent artifact not selected → Skipping AGENT environment update"
-    fi
+    update_env "job" \
+    "$INIT_APPS_PATH/alert-job-server-1.0/conf/environment.conf"
+}
 
-    echo "=================================================="
-    echo "🎉 environment.conf update process completed"
-    echo "=================================================="
+[[ " ${ARTIFACTS[*]} " == *" agent "* ]] && {
+    update_env "agent" \
+    "$INIT_APPS_PATH/alert-agent-1.0/conf/environment.conf"
+}
+
+return 0
+
 }
 
 
@@ -650,30 +635,30 @@ setup_keystore() {
     echo "🔐 Starting Keystore setup process"
     echo "=================================================="
 
-    # Validate required variables
     echo "🔎 Validating required keystore variables"
 
-    if [[ -z "${keystorePass:-}" ]]; then
-        echo "❌ keystorePass missing"
-        return 1
-    fi
-
-
-
-
-    [ -z "$KEYSTORE_FILE" ] && { echo "❌ KEYSTORE_FILE missing"; exit 1; }
+    [ -z "${keystorePass:-}" ] && fail "keystorePass missing"
+    [ -z "$KEYSTORE_FILE" ] && fail "KEYSTORE_FILE missing"
 
     echo "✅ Required keystore variables present"
 
-    # Ensure keystore directory exists
     echo "📁 Ensuring keystore directory exists: $KEYSTORE_PATH"
     mkdir -p "$KEYSTORE_PATH"
+    [ $? -ne 0 ] && fail "Keystore directory creation failed"
 
-    # Convert paths for Windows usage
     echo "🔄 Converting keystore paths to Windows format"
 
-    WIN_KEYSTORE_FILE=$(cygpath -w "$KEYSTORE_FILE" | sed 's|\\|\\\\|g')
-    WIN_KEYSTORE_KEY_PATH=$(cygpath -w "$KEYSTORE_KEY_PATH" | sed 's|\\|\\\\|g')
+    WIN_KEYSTORE_FILE=$(cygpath -w "$KEYSTORE_FILE")
+    [ $? -ne 0 ] && fail "cygpath conversion failed for KEYSTORE_FILE"
+
+    WIN_KEYSTORE_FILE=$(echo "$WIN_KEYSTORE_FILE" | sed 's|\\|\\\\|g')
+    [ $? -ne 0 ] && fail "sed formatting failed for KEYSTORE_FILE"
+
+    WIN_KEYSTORE_KEY_PATH=$(cygpath -w "$KEYSTORE_KEY_PATH")
+    [ $? -ne 0 ] && fail "cygpath conversion failed for KEYSTORE_KEY_PATH"
+
+    WIN_KEYSTORE_KEY_PATH=$(echo "$WIN_KEYSTORE_KEY_PATH" | sed 's|\\|\\\\|g')
+    [ $? -ne 0 ] && fail "sed formatting failed for KEYSTORE_KEY_PATH"
 
     echo "✔ Path conversion completed"
 
@@ -694,8 +679,7 @@ setup_keystore() {
                 APPS_PATH="${INIT_APPS_PATH}/alert-agent-1.0"
                 ;;
             *)
-                echo "❌ Unknown service: $service"
-                exit 1
+                fail "Unknown service: $service"
                 ;;
         esac
 
@@ -711,7 +695,9 @@ setup_keystore() {
     insert_secrets_branch12() {
 
         echo "🔑 Inserting secrets using Branch 12 method"
+
         printf "%s" "$keystorePass" > "$WIN_KEYSTORE_KEY_PATH"
+        [ $? -ne 0 ] && fail "Failed writing keystore password file"
 
         jq -c '.[]' <<< "$KEYSTORE_SECRETS" | while read -r item; do
             key=$(jq -r 'keys[0]' <<< "$item")
@@ -719,12 +705,14 @@ setup_keystore() {
 
             echo "➡️ Upserting key: $key"
 
-            cd "$APPS_PATH/lib" || exit 1
+            cd "$APPS_PATH/lib" || fail "cd failed"
 
             MSYS_NO_PATHCONV=1 java -cp "./*" \
                 -Dlog4j.configurationFile=../conf/log4j2.xml \
                 -Dcrypto.configurationFile=../conf/keystore.conf \
-                com.alnt.cryptoutil.Main key_upsert "$key" "$val" || exit 1
+                com.alnt.cryptoutil.Main key_upsert "$key" "$val"
+
+            [ $? -ne 0 ] && fail "Secret insert failed $key"
         done
 
         echo "✅ Secrets inserted (Branch 12)"
@@ -736,7 +724,9 @@ setup_keystore() {
     insert_secrets_branch11() {
 
         echo "🔑 Inserting secrets using Branch 11 method"
+
         printf "%s" "$keystorePass" > "$WIN_KEYSTORE_KEY_PATH"
+        [ $? -ne 0 ] && fail "Failed writing keystore password file"
 
         jq -c '.[]' <<< "$KEYSTORE_SECRETS" | while read -r item; do
             key=$(jq -r 'keys[0]' <<< "$item")
@@ -744,12 +734,14 @@ setup_keystore() {
 
             echo "➡️ Adding key: $key"
 
-            cd "$APPS_PATH/lib" || exit 1
+            cd "$APPS_PATH/lib" || fail "cd failed"
 
             MSYS_NO_PATHCONV=1 java -jar keystore-0.0.1-SNAPSHOT.jar \
                 "$WIN_KEYSTORE_FILE" \
                 "$keystorePass" \
-                "$val" "$key" || exit 1
+                "$val" "$key"
+
+            [ $? -ne 0 ] && fail "Secret insert failed $key"
         done
 
         echo "✅ Secrets inserted (Branch 11)"
@@ -765,6 +757,7 @@ setup_keystore() {
             -storetype PKCS12 \
             -storepass "$keystorePass" \
             -keypass "$keystorePass"
+        [ $? -ne 0 ] && fail "Keystore creation failed"
         echo "✅ Branch 12 keystore created"
     }
 
@@ -776,6 +769,7 @@ setup_keystore() {
             -keystore "$WIN_KEYSTORE_FILE" \
             -storepass "$keystorePass" \
             -keypass "$keystorePass"
+        [ $? -ne 0 ] && fail "Keystore creation failed"
         echo "✅ Branch 11 keystore created"
     }
 
@@ -819,15 +813,13 @@ setup_keystore() {
         fi
 
     else
-        echo "❌ No keystore configuration found for selected service"
-        exit 1
+        fail "No keystore configuration found for selected service"
     fi
 
     echo "=================================================="
     echo "🎉 Keystore setup process completed successfully"
     echo "=================================================="
 }
-
 
 ################################
 # CREATE NSSM SERVICE IF NOT EXISTS (AND START IT)
@@ -867,19 +859,35 @@ add_nssm_service_if_not_exists() {
     local WIN_STDERR_LOG
 
     WIN_EXE_PATH=$(cygpath -w "$EXE_PATH")
+    [ $? -ne 0 ] && fail "cygpath failed for EXE_PATH"
+
     WIN_STARTUP_DIR=$(cygpath -w "$STARTUP_DIR")
+    [ $? -ne 0 ] && fail "cygpath failed for STARTUP_DIR"
+
     WIN_STDOUT_LOG=$(cygpath -w "$STDOUT_LOG")
+    [ $? -ne 0 ] && fail "cygpath failed for STDOUT_LOG"
+
     WIN_STDERR_LOG=$(cygpath -w "$STDERR_LOG")
+    [ $? -ne 0 ] && fail "cygpath failed for STDERR_LOG"
 
     echo "📂 Executable : $WIN_EXE_PATH"
     echo "📂 Work Dir   : $WIN_STARTUP_DIR"
 
     # Install service
     MSYS_NO_PATHCONV=1 "$NSSM" install "$SERVICE_NAME" "$WIN_EXE_PATH" $ARGUMENTS
+    [ $? -ne 0 ] && fail "NSSM install failed for $SERVICE_NAME"
+
     MSYS_NO_PATHCONV=1 "$NSSM" set "$SERVICE_NAME" AppDirectory "$WIN_STARTUP_DIR"
+    [ $? -ne 0 ] && fail "NSSM AppDirectory set failed for $SERVICE_NAME"
+
     MSYS_NO_PATHCONV=1 "$NSSM" set "$SERVICE_NAME" AppStdout "$WIN_STDOUT_LOG"
+    [ $? -ne 0 ] && fail "NSSM AppStdout set failed for $SERVICE_NAME"
+
     MSYS_NO_PATHCONV=1 "$NSSM" set "$SERVICE_NAME" AppStderr "$WIN_STDERR_LOG"
+    [ $? -ne 0 ] && fail "NSSM AppStderr set failed for $SERVICE_NAME"
+
     MSYS_NO_PATHCONV=1 "$NSSM" set "$SERVICE_NAME" Start SERVICE_AUTO_START
+    [ $? -ne 0 ] && fail "NSSM startup type set failed for $SERVICE_NAME"
 
     echo "✅ Service '$SERVICE_NAME' created successfully"
 }
@@ -908,7 +916,8 @@ create_application_services() {
       '-cp "./lib/*" -Xms2g -Xmx6g -Dconfig.file=conf/application.conf -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
       "$INIT_APPS_PATH/alert-api-server-1.0" \
       "$INIT_APPS_PATH/alert-api-server-1.0/logs/srvc.out" \
-      "$INIT_APPS_PATH/alert-api-server-1.0/logs/srvc.err"
+      "$INIT_APPS_PATH/alert-api-server-1.0/logs/srvc.err" \
+      || fail "API service creation failed"
 
     echo "🧩 Creating JOB service"
     add_nssm_service_if_not_exists \
@@ -917,7 +926,8 @@ create_application_services() {
       '-cp "./lib/*" -Xms2g -Xmx6g -Dconfig.file=conf/jobserver.conf -Dhttp.port=9090 -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
       "$INIT_APPS_PATH/alert-job-server-1.0" \
       "$INIT_APPS_PATH/alert-job-server-1.0/logs/srvc.out" \
-      "$INIT_APPS_PATH/alert-job-server-1.0/logs/srvc.err"
+      "$INIT_APPS_PATH/alert-job-server-1.0/logs/srvc.err" \
+      || fail "JOB service creation failed"
 
     echo "🧩 Creating UI (NGINX) service"
     add_nssm_service_if_not_exists \
@@ -926,7 +936,8 @@ create_application_services() {
       "" \
       "$NGINX_PATH" \
       "$NGINX_PATH/logs/srvc.out" \
-      "$NGINX_PATH/logs/srvc.err"
+      "$NGINX_PATH/logs/srvc.err" \
+      || fail "UI service creation failed"
 
     echo "✅ APPLICATION services setup completed"
 }
@@ -945,7 +956,8 @@ create_agent_service() {
       '-cp "./lib/*" -Xms2g -Xmx6g -Dconfig.file=conf/application.conf -Dhttp.port=9095 -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
       "$INIT_APPS_PATH/alert-agent-1.0" \
       "$INIT_APPS_PATH/alert-agent-1.0/logs/srvc.out" \
-      "$INIT_APPS_PATH/alert-agent-1.0/logs/srvc.err"
+      "$INIT_APPS_PATH/alert-agent-1.0/logs/srvc.err" \
+      || fail "AGENT service creation failed"
 
     echo "✅ AGENT service setup completed"
 }
@@ -974,7 +986,6 @@ fi
 echo "✔ Service creation stage completed"
 echo "=================================================="
 
-
 ################################
 # UI SETUP / CLEANUP
 ################################
@@ -983,43 +994,20 @@ echo "=================================================="
 ################################
 uiSetup() {
 
-    echo "=================================================="
-    echo "▶️ Starting UI setup and cleanup process"
-    echo "=================================================="
+if [ -d "${INIT_APPS_PATH}/production/AlertUI" ]; then
+    mv "${INIT_APPS_PATH}/production/AlertUI" "${INIT_APPS_PATH}/"
+    [ $? -ne 0 ] && fail "UI move failed"
+else
+    fail "AlertUI directory missing"
+fi
 
-    echo "📁 Base path: $INIT_APPS_PATH"
+if [ -d "${INIT_APPS_PATH}/production" ]; then
+    rm -rf "${INIT_APPS_PATH}/production"
+    [ $? -ne 0 ] && fail "Production cleanup failed"
+fi
 
-    ################################
-    # MOVE AlertUI (if exists)
-    ################################
-    if [ -d "${INIT_APPS_PATH}/production/AlertUI" ]; then
-        echo "➡️ Detected: ${INIT_APPS_PATH}/production/AlertUI"
-        echo "🔄 Moving AlertUI to $INIT_APPS_PATH"
+echo "✅ UI setup completed"
 
-        mv "${INIT_APPS_PATH}/production/AlertUI" "${INIT_APPS_PATH}/"
-
-        echo "✅ AlertUI moved successfully"
-    else
-        echo "ℹ️ AlertUI not found inside production directory → Skipping move"
-    fi
-
-    ################################
-    # REMOVE production DIRECTORY
-    ################################
-    if [ -d "${INIT_APPS_PATH}/production" ]; then
-        echo "🗑️ Cleaning up production directory"
-        echo "📂 Removing: ${INIT_APPS_PATH}/production"
-
-        rm -rf "${INIT_APPS_PATH}/production"
-
-        echo "✅ Production directory removed"
-    else
-        echo "ℹ️ No production directory found → Nothing to remove"
-    fi
-
-    echo "=================================================="
-    echo "✔ UI setup and cleanup stage completed"
-    echo "=================================================="
 }
 
 
@@ -1059,7 +1047,15 @@ applicationStart() {
                     echo "ℹ️ $svc is already running → Skipping start"
                 else
                     echo "🚀 Starting $svc..."
-                    powershell.exe -Command "Start-Service $svc"
+                    powershell.exe -Command "
+                        try {
+                            Start-Service -Name '$svc' -ErrorAction Stop
+                        } catch {
+                            exit 1
+                        }
+                    "
+                    rc=$?
+                    [ $rc -ne 0 ] && fail "Failed to start service $svc"
                     echo "✅ $svc started successfully"
                 fi
             else
@@ -1072,6 +1068,8 @@ applicationStart() {
 
             sed -i 's/^RUN_ON_STARTUP=.*/RUN_ON_STARTUP=false/' \
             "$INIT_APPS_PATH/alert-api-server-1.0/conf/override_env.conf"
+            rc=$?
+            [ $rc -ne 0 ] && fail "Failed updating RUN_ON_STARTUP flag"
         fi
 
         echo "✔ APPLICATION service start stage completed"
@@ -1092,7 +1090,15 @@ applicationStart() {
                 echo "ℹ️ SVC_AGENT is already running → Skipping start"
             else
                 echo "🚀 Starting SVC_AGENT..."
-                powershell.exe -Command "Start-Service SVC_AGENT"
+                powershell.exe -Command "
+                    try {
+                        Start-Service -Name 'SVC_AGENT' -ErrorAction Stop
+                    } catch {
+                        exit 1
+                    }
+                "
+                rc=$?
+                [ $rc -ne 0 ] && fail "Failed to start service SVC_AGENT"
                 echo "✅ SVC_AGENT started successfully"
             fi
         else
@@ -1145,7 +1151,7 @@ check_port() {
 
     echo "❌ Port $PORT did not become available after $MAX_RETRIES attempts"
     echo "=================================================="
-    exit 1
+    fail "Port $PORT validation failed"
 }
 
 ################################
@@ -1201,8 +1207,24 @@ flyway_run() {
     echo "🛫 Starting Flyway migration stage"
     echo "=================================================="
 
+    ################################
+    # DB MIGRATION PATHS (VERY IMPORTANT)
+    ################################
+
+    if [[ " ${ARTIFACTS[*]} " == *" application "* ]]; then
+        [ -d "$DB_PATH" ] || fail "Application DB_PATH missing: $DB_PATH"
+        [ -d "${DB_PATH}DML" ] || fail "Application DB DML path missing: ${DB_PATH}DML"
+    fi
+
+    if [[ " ${ARTIFACTS[*]} " == *" agent "* ]]; then
+        [ -d "$DB_PATH_AGENT" ] || fail "Agent DB_PATH missing: $DB_PATH_AGENT"
+        [ -d "${DB_PATH_AGENT}DML" ] || fail "Agent DB DML path missing: ${DB_PATH_AGENT}DML"
+    fi
+
     echo "📁 Ensuring Flyway log directory exists"
     mkdir -p "$LOGS_PATH/flyway"
+    rc=$?
+    [ $rc -ne 0 ] && fail "Flyway log directory creation failed"
 
     # Fail if Flyway command fails
     set -o pipefail
@@ -1216,7 +1238,7 @@ flyway_run() {
     if [[ " ${ARTIFACTS[*]} " == *" application "* ]]; then
         if [ -z "$DB_PATH" ]; then
             echo "❌ DB_PATH is empty for APPLICATION"
-            exit 1
+            fail "DB_PATH validation failed"
         fi
         echo "✅ DB_PATH validated for APPLICATION"
     else
@@ -1226,7 +1248,7 @@ flyway_run() {
     if [[ " ${ARTIFACTS[*]} " == *" agent "* ]]; then
         if [ -z "$DB_PATH_AGENT" ]; then
             echo "❌ DB_PATH_AGENT is empty for AGENT"
-            exit 1
+            fail "DB_PATH_AGENT validation failed"
         fi
         echo "✅ DB_PATH_AGENT validated for AGENT"
     else
@@ -1240,6 +1262,9 @@ flyway_run() {
 
     if [[ " ${ARTIFACTS[*]} " == *" application "* ]]; then
         WIN_DB_PATH=$(cygpath -w "$DB_PATH")
+        rc=$?
+        [ $rc -ne 0 ] && fail "cygpath conversion failed for DB_PATH"
+
         WIN_DB_PATH_DML="${WIN_DB_PATH}DML"
 
         echo "📂 Application DB Path     : $WIN_DB_PATH"
@@ -1248,6 +1273,9 @@ flyway_run() {
 
     if [[ " ${ARTIFACTS[*]} " == *" agent "* ]]; then
         WIN_DB_PATH_AGENT=$(cygpath -w "$DB_PATH_AGENT")
+        rc=$?
+        [ $rc -ne 0 ] && fail "cygpath conversion failed for DB_PATH_AGENT"
+
         WIN_DB_PATH_AGENT_DML="${WIN_DB_PATH_AGENT}DML"
 
         echo "📂 Agent DB Path     : $WIN_DB_PATH_AGENT"
@@ -1272,7 +1300,12 @@ flyway_run() {
         echo "--------------------------------------------------"
 
         mkdir -p "$(dirname "$logfile")"
+        rc=$?
+        [ $rc -ne 0 ] && fail "Flyway logfile directory creation failed"
+
         touch "$logfile"
+        rc=$?
+        [ $rc -ne 0 ] && fail "Flyway logfile creation failed"
 
         ################################
         # REPAIR (Do not stop script)
@@ -1304,7 +1337,7 @@ flyway_run() {
 
         if [ $migrate_status -ne 0 ]; then
             echo "❌ Flyway migrate FAILED for ${service^^}"
-            return 1
+            fail "Flyway migrate failed for ${service}"
         fi
 
         echo "✅ Flyway migration completed for ${service^^}"
@@ -1323,6 +1356,8 @@ flyway_run() {
             "filesystem:${WIN_DB_PATH},filesystem:${WIN_DB_PATH_DML}" \
             "$LOGS_PATH/flyway/flyway_application.log" \
             "$dbSchemaApp"
+        rc=$?
+        [ $rc -ne 0 ] && fail "APPLICATION DB migration failed"
 
         echo "✔ APPLICATION DB migration completed"
     else
@@ -1340,6 +1375,8 @@ flyway_run() {
             "filesystem:${WIN_DB_PATH_AGENT},filesystem:${WIN_DB_PATH_AGENT_DML}" \
             "$LOGS_PATH/flyway/flyway_agent.log" \
             "$dbSchemaAgent"
+        rc=$?
+        [ $rc -ne 0 ] && fail "AGENT DB migration failed"
 
         echo "✔ AGENT DB migration completed"
     else
@@ -1355,10 +1392,15 @@ flyway_run() {
 # MAIN
 ################################
 main() {
+
+    step "Create dirs" create_dirs
+    step "Precheck" precheck
+
     echo "Flyway Skip Flag = $flywayskip"
 
     if [[ "${flywayFixed,,}" == "true" && "${flywaySkip,,}" != "true" ]]; then
-        flyway_run || exit 1
+        echo "Flyway only mode"
+        step "Flyway" flyway_run
         exit 0
     fi
 
@@ -1370,34 +1412,33 @@ main() {
         if grep -q "^RUN_ON_STARTUP=" "$CONF_FILE"; then
             sed -i 's/^RUN_ON_STARTUP=.*/RUN_ON_STARTUP=true/' "$CONF_FILE"
         else
-            # echo "RUN_ON_STARTUP=true" >> "$CONF_FILE"
             echo "RUN_ON_STARTUP=true is not present"
         fi
 
-        applicationStart || exit 1
+        step "Start services" applicationStart
         exit 0
     fi
 
-    create_dirs || return 1
-    stop_services || return 1
-    logoff_other_sessions || return 1
-    backup || return 1
-    download_build || return 1
-    extract_zip || return 1
-    copy_env_configs || return 1
-    update_environment_conf || return 1
-    setup_keystore || return 1
-    uiSetup || return 1
-    applicationStart || return 1
-    validate || return 1
+    step "Stop services" stop_services
+    step "Logoff sessions" logoff_other_sessions
+    step "Backup" backup
+    step "Download build" download_build
+    step "Extract" extract_zip
+    step "Copy configs" copy_env_configs
+    step "Update env" update_environment_conf
+    step "Keystore" setup_keystore
+    step "UI setup" uiSetup
+    step "Start services" applicationStart
+    step "Validate" validate
 
     if [ "$flywayskip" = "true" ]; then
         echo "Skipping Flyway Migration"
     else
         echo "Running Flyway Migration"
-        flyway_run || exit 1
+        step "Flyway" flyway_run
     fi
 
+    echo "✅ DEPLOY SUCCESS"
 }
 
 main
