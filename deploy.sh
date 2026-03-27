@@ -1252,11 +1252,9 @@ flyway_run() {
     run_flyway() {
 
         local service="$1"
-        local dbUrl="$2"
-        local locations="$3"
-        local logfile="$4"
-        local dbSchema="$5"
-        
+        local locations="$2"
+        local logfile="$3"
+        local dbSchema="$4"
 
         echo "--------------------------------------------------"
         echo "➡️ Running Flyway for ${service^^} database"
@@ -1276,7 +1274,7 @@ flyway_run() {
         MSYS_NO_PATHCONV=1 flyway \
             -user="$flywayUser" \
             -password="$flywayPass" \
-            -url="$dbUrl" \
+            -url="$dbURL" \
             -schemas="$dbSchema" \
             -locations="$locations" \
             repair || echo "⚠ Repair failed — continuing to migrate"
@@ -1289,7 +1287,7 @@ flyway_run() {
         MSYS_NO_PATHCONV=1 flyway \
             -user="$flywayUser" \
             -password="$flywayPass" \
-            -url="$dbUrl" \
+            -url="$dbURL" \
             -schemas="$dbSchema" \
             -locations="$locations" \
             migrate 2>&1 | tee "$logfile"
@@ -1314,7 +1312,6 @@ flyway_run() {
 
         run_flyway \
             "application" \
-            "$dbURL" \
             "filesystem:${WIN_DB_PATH},filesystem:${WIN_DB_PATH_DML}" \
             "$LOGS_PATH/flyway/flyway_application.log" \
             "$dbSchemaApp"
@@ -1332,7 +1329,6 @@ flyway_run() {
 
         run_flyway \
             "agent" \
-            "$dbUrlAgent" \
             "filesystem:${WIN_DB_PATH_AGENT},filesystem:${WIN_DB_PATH_AGENT_DML}" \
             "$LOGS_PATH/flyway/flyway_agent.log" \
             "$dbSchemaAgent"
