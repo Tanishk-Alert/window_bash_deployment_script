@@ -27,7 +27,7 @@ step() {
 ################################
 # LOAD ENV
 ################################
-ENV_FILE="/opt/AlertEnterprise/configs/.env"
+ENV_FILE="/c/AlertEnterprise/configs/.env"
 
 [ ! -f "$ENV_FILE" ] && fail "ENV file missing: $ENV_FILE"
 
@@ -67,7 +67,7 @@ command -v unzip >/dev/null 2>&1 || fail "unzip not installed"
 command -v aws >/dev/null 2>&1 || fail "AWS CLI not installed"
 command -v jq >/dev/null 2>&1 || fail "jq not installed"
 command -v flyway >/dev/null 2>&1 || fail "flyway not installed"
-command -v ss >/dev/null 2>&1 || fail "ss command missing"
+command -v netstat >/dev/null 2>&1 || fail "ss command missing"
 
 ################################
 # IMPORTANT DIRECTORY CHECK
@@ -118,15 +118,15 @@ done
 ################################
 # LOAD SECRETS
 ################################
-[ -z "$SECRETS" ] && fail "SECRETS missing"
+# [ -z "$SECRETS" ] && fail "SECRETS missing"
 
-while read -r item; do
-    key=$(jq -r 'keys[0]' <<< "$item")
-    val=$(jq -r '.[keys[0]]' <<< "$item")
-    export "$key=$val"
-done < <(jq -c '.[]' <<< "$SECRETS")
+# while read -r item; do
+#     key=$(jq -r 'keys[0]' <<< "$item")
+#     val=$(jq -r '.[keys[0]]' <<< "$item")
+#     export "$key=$val"
+# done < <(jq -c '.[]' <<< "$SECRETS")
 
-[ -z "$keystorePass" ] && fail "keystorePass missing"
+# [ -z "$keystorePass" ] && fail "keystorePass missing"
 
 ################################
 # FUNCTIONS
@@ -138,8 +138,8 @@ done < <(jq -c '.[]' <<< "$SECRETS")
 create_dirs() {
     echo "Creating directories"
     run mkdir -p "$APP_PATH" "$INIT_APPS_PATH" "$KEYSTORE_PATH" \
-        "$CONFIG_PATH" "$SCRIPTS_PATH" "$TEMP_PATH" "$CERT_DIR" \
-        "$LOGS_PATH" "$BUILD_PATH"
+             "$CONFIG_PATH" \
+             "$LOGS_PATH" "$BUILD_PATH" "$CERT_DIR"
 }
 
 ################################
@@ -238,8 +238,9 @@ logoff_other_sessions() {
     echo "=========================================="
 
     SESSIONS_OUTPUT=$(query session)
-    rc=$?
-    [ $rc -ne 0 ] && fail "query session command failed"
+
+    # ✅ DO NOT check exit code — validate output instead
+    [ -z "$SESSIONS_OUTPUT" ] && fail "query session returned empty output"
 
     CURRENT_SESSION_ID=$(echo "$SESSIONS_OUTPUT" | awk '/>/{print $(NF-1)}')
 
@@ -259,26 +260,22 @@ logoff_other_sessions() {
         ID=$(echo "$clean_line" | awk '{print $(NF-1)}')
         USERNAME=$(echo "$clean_line" | awk '{print $(NF-2)}')
 
-        # Skip invalid rows
         if [[ -z "$USERNAME" || "$USERNAME" == "services" ]]; then
             continue
         fi
 
-        # Skip current session
         if [[ "$ID" == "$CURRENT_SESSION_ID" ]]; then
             echo "⏭ Skipping current session ID: $ID"
             continue
         fi
 
         if [[ "$STATE" == "Active" || "$STATE" == "Disc" ]]; then
-
             echo "🚪 Logging off user: $USERNAME | ID: $ID | State: $STATE"
 
             logoff "$ID"
             rc=$?
 
             [ $rc -ne 0 ] && fail "Failed to logoff session ID $ID"
-
         fi
 
     done
