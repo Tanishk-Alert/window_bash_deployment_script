@@ -1399,7 +1399,7 @@ main() {
     step "Create dirs" create_dirs
     step "Precheck" precheck
 
-    echo "Flyway Skip Flag = $flywayskip"
+    echo "Flyway Skip Flag = $flywaySkip"
 
     if [[ "${flywayFixed,,}" == "true" && "${flywaySkip,,}" != "true" ]]; then
         echo "Flyway only mode"
@@ -1434,7 +1434,7 @@ main() {
     step "Start services" applicationStart
     step "Validate" validate
 
-    if [ "$flywayskip" = "true" ]; then
+    if [ "$flywaySkip" = "true" ]; then
         echo "Skipping Flyway Migration"
     else
         echo "Running Flyway Migration"
