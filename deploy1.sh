@@ -1389,9 +1389,7 @@ main() {
     step "Create dirs" create_dirs
     step "Precheck" precheck
 
-    
-
-    if [[ "${flywayFixed,,}" == "true"]]; then
+    if [[ "${flywayFixed,,}" == "true" ]]; then
         echo "Flyway only mode"
         step "Flyway" flyway_run
         exit 0
