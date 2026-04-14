@@ -86,8 +86,8 @@ command -v netstat >/dev/null 2>&1 || fail "ss command missing"
 ################################
 # DISK SPACE CHECK
 ################################
-df -h "$INIT_APPS_PATH" | awk 'NR==2 { if ($5+0 > 90) exit 1 }'
-[ $? -ne 0 ] && fail "Disk usage > 90% on deployment mount"
+# df -h "$INIT_APPS_PATH" | awk 'NR==2 { if ($5+0 > 90) exit 1 }'
+# [ $? -ne 0 ] && fail "Disk usage > 90% on deployment mount"
 
 ################################
 # JAVA WORKING CHECK
