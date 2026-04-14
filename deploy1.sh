@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 export MSYS_NO_PATHCONV=1
-export LANG=en_US.UTF-8
-export LC_ALL=en_US.UTF-8
 
 fail() {
     echo "❌ ERROR: $1"
@@ -1400,7 +1398,7 @@ main() {
     step "Stop services" stop_services
     step "Logoff sessions" logoff_other_sessions
     step "Backup" backup
-    step "Download build" download_build
+    # step "Download build" download_build
     step "Extract" extract_zip
     step "Copy configs" copy_env_configs
     step "Update env" update_environment_conf
