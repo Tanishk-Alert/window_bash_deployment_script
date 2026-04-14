@@ -7,10 +7,13 @@ fail() {
 }
 
 run() {
+    echo "➡️ Running: $*"
     "$@"
     rc=$?
+    echo "➡️ Exit code: $rc"
     if [ $rc -ne 0 ]; then
-        fail "Command failed: $*"
+        echo "❌ ERROR: Command failed: $*"
+        exit 1
     fi
 }
 
@@ -118,15 +121,7 @@ done
 ################################
 # LOAD SECRETS
 ################################
-# [ -z "$SECRETS" ] && fail "SECRETS missing"
 
-# while read -r item; do
-#     key=$(jq -r 'keys[0]' <<< "$item")
-#     val=$(jq -r '.[keys[0]]' <<< "$item")
-#     export "$key=$val"
-# done < <(jq -c '.[]' <<< "$SECRETS")
-
-# [ -z "$keystorePass" ] && fail "keystorePass missing"
 
 ################################
 # FUNCTIONS
@@ -165,41 +160,51 @@ stop_services() {
     ################################
     stop_service_safe() {
 
-        svc="$1"
+    svc="$1"
+	pid="$2"
 
-        echo "🔍 Checking if ${svc} exists"
+    echo "🔍 Checking if ${svc} exists"
 
-        if service_exists "$svc"; then
+    if service_exists "$svc"; then
 
-            echo "🛑 Stopping ${svc}..."
+        echo "🛑 Stopping ${svc}..."
+		
+		if [ -f "$pid" ]; then
+			echo "Deleting $pid"
+			rm -f "$pid"
+		fi
 
-            powershell.exe -NoProfile -Command "
-                try {
-                    Stop-Service -Name '$svc' -Force -ErrorAction Stop
+        powershell.exe -NoProfile -Command "
+            try {
+                \$s = Get-Service -Name '$svc' -ErrorAction Stop
+                if (\$s.Status -eq 'Stopped') {
+                    Write-Host 'Service already stopped'
+                    exit 0
                 }
-                catch {
-                    exit 1
-                }
-            "
+                Stop-Service -Name '$svc' -Force -ErrorAction Stop
+            }
+            catch {
+                exit 1
+            }
+        "
 
-            rc=$?
-            [ $rc -ne 0 ] && fail "Failed stopping ${svc}"
+        rc=$?
+        [ $rc -ne 0 ] && fail "Failed stopping ${svc}"
 
-            echo "✅ ${svc} stopped successfully"
+        echo "✅ ${svc} stopped successfully"
 
-        else
-            echo "ℹ️ ${svc} not found, skipping"
-        fi
-    }
-
+    else
+        echo "ℹ️ ${svc} not found, skipping"
+    fi
+}
     ################################
     # APPLICATION SERVICES
     ################################
     if [[ " ${ARTIFACTS[*]} " == *" application "* ]]; then
 
         echo "➡️ Application artifact detected"
-        stop_service_safe "SVC_API"
-        stop_service_safe "SVC_JOB"
+        stop_service_safe "SVC_API"  "$INIT_APPS_PATH/alert-api-server-1.0/RUNNING_PID"
+        stop_service_safe "SVC_JOB"  "$INIT_APPS_PATH/alert-job-server-1.0/RUNNING_PID"
 
         echo "✔ APPLICATION service shutdown stage completed"
 
@@ -213,7 +218,7 @@ stop_services() {
     if [[ " ${ARTIFACTS[*]} " == *" agent "* ]]; then
 
         echo "➡️ Agent artifact detected"
-        stop_service_safe "SVC_AGENT"
+        stop_service_safe "SVC_AGENT" "$INIT_APPS_PATH/alert-agent-1.0/RUNNING_PID"
 
         echo "✔ AGENT service shutdown stage completed"
 
@@ -910,7 +915,7 @@ create_application_services() {
     add_nssm_service_if_not_exists \
       "SVC_API" \
       "$JAVA_HOME/bin/java.exe" \
-      '-cp "./lib/*" -Xms2g -Xmx6g -Dconfig.file=conf/application.conf -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
+      '-cp "./lib/*" -Xms1g -Xmx2g -Dconfig.file=conf/application.conf -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
       "$INIT_APPS_PATH/alert-api-server-1.0" \
       "$INIT_APPS_PATH/alert-api-server-1.0/logs/srvc.out" \
       "$INIT_APPS_PATH/alert-api-server-1.0/logs/srvc.err" \
@@ -920,7 +925,7 @@ create_application_services() {
     add_nssm_service_if_not_exists \
       "SVC_JOB" \
       "$JAVA_HOME/bin/java.exe" \
-      '-cp "./lib/*" -Xms2g -Xmx6g -Dconfig.file=conf/jobserver.conf -Dhttp.port=9090 -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
+      '-cp "./lib/*" -Xms1g -Xmx3g -Dconfig.file=conf/jobserver.conf -Dhttp.port=9090 -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
       "$INIT_APPS_PATH/alert-job-server-1.0" \
       "$INIT_APPS_PATH/alert-job-server-1.0/logs/srvc.out" \
       "$INIT_APPS_PATH/alert-job-server-1.0/logs/srvc.err" \
@@ -950,7 +955,7 @@ create_agent_service() {
     add_nssm_service_if_not_exists \
       "SVC_AGENT" \
       "$JAVA_HOME/bin/java.exe" \
-      '-cp "./lib/*" -Xms2g -Xmx6g -Dconfig.file=conf/application.conf -Dhttp.port=9095 -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
+      '-cp "./lib/*" -Xms1g -Xmx2g -Dconfig.file=conf/application.conf -Dhttp.port=9095 -Dlogback.debug=true -Dorg.owasp.esapi.resources=conf -Dlog4j.configurationFile=conf/log4j2.xml play.core.server.ProdServerStart' \
       "$INIT_APPS_PATH/alert-agent-1.0" \
       "$INIT_APPS_PATH/alert-agent-1.0/logs/srvc.out" \
       "$INIT_APPS_PATH/alert-agent-1.0/logs/srvc.err" \
@@ -1059,15 +1064,6 @@ applicationStart() {
                 echo "⚠️ $svc does not exist → Cannot start"
             fi
         done
-
-        if [[ "${flywaySkip,,}" == "true" ]]; then
-            echo "Flyway skip is TRUE → Disabling RUN_ON_STARTUP"
-
-            sed -i 's/^RUN_ON_STARTUP=.*/RUN_ON_STARTUP=false/' \
-            "$INIT_APPS_PATH/alert-api-server-1.0/conf/override_env.conf"
-            rc=$?
-            [ $rc -ne 0 ] && fail "Failed updating RUN_ON_STARTUP flag"
-        fi
 
         echo "✔ APPLICATION service start stage completed"
     else
@@ -1393,33 +1389,18 @@ main() {
     step "Create dirs" create_dirs
     step "Precheck" precheck
 
-    echo "Flyway Skip Flag = $flywayskip"
+    
 
-    if [[ "${flywayFixed,,}" == "true" && "${flywaySkip,,}" != "true" ]]; then
+    if [[ "${flywayFixed,,}" == "true"]]; then
         echo "Flyway only mode"
         step "Flyway" flyway_run
-        exit 0
-    fi
-
-    CONF_FILE="$INIT_APPS_PATH/alert-api-server-1.0/conf/override_env.conf"
-
-    if [[ "${flywayFixed,,}" == "true" && "${flywaySkip,,}" == "true" ]]; then
-        echo "Flyway fixed + Flyway skip → Enabling RUN_ON_STARTUP"
-
-        if grep -q "^RUN_ON_STARTUP=" "$CONF_FILE"; then
-            sed -i 's/^RUN_ON_STARTUP=.*/RUN_ON_STARTUP=true/' "$CONF_FILE"
-        else
-            echo "RUN_ON_STARTUP=true is not present"
-        fi
-
-        step "Start services" applicationStart
         exit 0
     fi
 
     step "Stop services" stop_services
     step "Logoff sessions" logoff_other_sessions
     step "Backup" backup
-    step "Download build" download_build
+    #step "Download build" download_build
     step "Extract" extract_zip
     step "Copy configs" copy_env_configs
     step "Update env" update_environment_conf
@@ -1427,14 +1408,7 @@ main() {
     step "UI setup" uiSetup
     step "Start services" applicationStart
     step "Validate" validate
-
-    if [ "$flywayskip" = "true" ]; then
-        echo "Skipping Flyway Migration"
-    else
-        echo "Running Flyway Migration"
-        step "Flyway" flyway_run
-    fi
-
+    step "Flyway" flyway_run
     echo "✅ DEPLOY SUCCESS"
 }
 
