@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 export MSYS_NO_PATHCONV=1
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
 
 fail() {
     echo "❌ ERROR: $1"
