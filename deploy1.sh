@@ -1398,7 +1398,7 @@ main() {
     step "Stop services" stop_services
     step "Logoff sessions" logoff_other_sessions
     step "Backup" backup
-    # step "Download build" download_build
+    step "Download build" download_build
     step "Extract" extract_zip
     step "Copy configs" copy_env_configs
     step "Update env" update_environment_conf
