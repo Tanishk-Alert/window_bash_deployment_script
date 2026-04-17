@@ -382,11 +382,14 @@ download_build() {
         echo "📂 Target : $WIN_BUILD_PATH"
         echo "--------------------------------------------------"
 
-        if aws s3 cp "$src" "$WIN_BUILD_PATH\\"; then
-            echo "✅ Successfully downloaded ${artifact}.zip"
-        else
-            echo "⚠️ ${artifact}.zip not found in S3 → Skipping"
-        fi
+        echo "⬇️ Downloading ${artifact}.zip"
+
+        aws s3 cp "$src" "$WIN_BUILD_PATH\\"
+        rc=$?
+
+        [ $rc -ne 0 ] && fail "Download failed for ${artifact}"
+
+        echo "✔ Downloaded ${artifact}.zip"
     }
 
     ################################
