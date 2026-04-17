@@ -999,6 +999,11 @@ echo "=================================================="
 ################################
 uiSetup() {
 
+if [[ " ${ARTIFACTS[*]} " == *" agent "* ]]; then
+    echo "ui setup not required for agent"
+    return 0
+fi
+
 if [ -d "${INIT_APPS_PATH}/production/AlertUI" ]; then
     mv "${INIT_APPS_PATH}/production/AlertUI" "${INIT_APPS_PATH}/"
     [ $? -ne 0 ] && fail "UI move failed"
