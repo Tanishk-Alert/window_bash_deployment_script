@@ -86,8 +86,9 @@ command -v netstat >/dev/null 2>&1 || fail "ss command missing"
 ################################
 # DISK SPACE CHECK
 ################################
-# df -h "$INIT_APPS_PATH" | awk 'NR==2 { if ($5+0 > 90) exit 1 }'
-# [ $? -ne 0 ] && fail "Disk usage > 90% on deployment mount"
+avail_gb=$(df -BG "$INIT_APPS_PATH" | awk 'NR==2 {gsub("G","",$4); print $4}')
+
+[ "$avail_gb" -lt 3 ] && fail "Minimum 3 GB free space required on deployment mount"
 
 ################################
 # JAVA WORKING CHECK
@@ -336,8 +337,10 @@ backup() {
 [ -d "$APP_PATH/bkp_2" ] && run rm -rf "$APP_PATH/bkp_2"
 
 if [ -d "$APP_PATH/bkp_1" ]; then
-    run mkdir -p "$APP_PATH/bkp_2"
-    run mv "$APP_PATH"/bkp_1/* "$APP_PATH"/bkp_2/
+    if [ "$(find "$APP_PATH/bkp_1" -mindepth 1 -print -quit 2>/dev/null)" ]; then
+        run mkdir -p "$APP_PATH/bkp_2"
+        run mv "$APP_PATH"/bkp_1/* "$APP_PATH"/bkp_2/
+    fi
 fi
 
 if [ -d "$INIT_APPS_PATH" ] && [ "$(ls -A "$INIT_APPS_PATH")" ]; then
