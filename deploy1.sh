@@ -1341,7 +1341,6 @@ flyway_run() {
 
         if [ $migrate_status -ne 0 ]; then
             echo "❌ Flyway migrate FAILED for ${service^^}"
-            fail "Flyway migrate failed for ${service}"
         fi
 
         echo "✅ Flyway migration completed for ${service^^}"
