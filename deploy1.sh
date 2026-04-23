@@ -441,9 +441,9 @@ extract_artifact() {
     [ ! -f "$zip_file" ] && fail "$artifact zip missing"
 
     if [[ "${artifact,,}" == *db* ]]; then
-        run unzip -qq "$zip_file" -d "${INIT_APPS_PATH}/${artifact}"
+        run unzip -oq "$zip_file" -d "${INIT_APPS_PATH}/${artifact}"
     else
-        run unzip -qq "$zip_file" -d "${INIT_APPS_PATH}"
+        run unzip -oq "$zip_file" -d "${INIT_APPS_PATH}"
     fi
 }
 
